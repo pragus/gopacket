@@ -14,9 +14,6 @@ import (
 	"time"
 )
 
-// #include <linux/if_packet.h>
-// #include <sys/socket.h>
-import "C"
 
 // OptTPacketVersion is the version of TPacket to use.
 // It can be passed into NewTPacket.
@@ -54,18 +51,18 @@ func (t OptSocketType) String() string {
 const (
 	// TPacketVersionHighestAvailable tells NewHandle to use the highest available version of tpacket the kernel has available.
 	// This is the default, should a version number not be given in NewHandle's options.
-	TPacketVersionHighestAvailable = OptTPacketVersion(-1)
-	TPacketVersion1                = OptTPacketVersion(C.TPACKET_V1)
-	TPacketVersion2                = OptTPacketVersion(C.TPACKET_V2)
-	TPacketVersion3                = OptTPacketVersion(C.TPACKET_V3)
-	tpacketVersionMax              = TPacketVersion3
-	tpacketVersionMin              = -1
+	TPacketVersionHighestAvailable	= OptTPacketVersion(-1)
+	TPacketVersion1			= OptTPacketVersion(0x0)
+	TPacketVersion2			= OptTPacketVersion(0x1)
+	TPacketVersion3			= OptTPacketVersion(0x2)
+	tpacketVersionMax		= TPacketVersion3
+	tpacketVersionMin		= -1
 	// SocketRaw is the default socket type.  It returns packet data
 	// including the link layer (ethernet headers, etc).
-	SocketRaw = OptSocketType(C.SOCK_RAW)
+	SocketRaw = OptSocketType(0x3)
 	// SocketDgram strips off the link layer when reading packets, and adds
 	// the link layer back automatically on packet writes (coming soon...)
-	SocketDgram = OptSocketType(C.SOCK_DGRAM)
+	SocketDgram = OptSocketType(0x2)
 )
 
 // OptInterface is the specific interface to bind to.
