@@ -15,20 +15,17 @@ package afpacket
 
 import (
 	"errors"
-	"fmt"
-	"net"
-	"runtime"
-	"sync"
-	"sync/atomic"
-	"syscall"
-	"time"
-	"unsafe"
-
-	"golang.org/x/net/bpf"
 	"golang.org/x/sys/unix"
-
-	"github.com/google/gopacket"
-)
+	"unsafe"
+	"sync"
+	"net"
+	"time"
+	"runtime"
+	"syscall"
+	"fmt"
+	"golang.org/x/net/bpf"
+	"sync/atomic"
+	)
 
 /*
 #include <linux/if_packet.h>  // AF_PACKET, sockaddr_ll
@@ -42,7 +39,7 @@ import (
 import "C"
 
 var pageSize = unix.Getpagesize()
-var tpacketAlignment = uint(C.TPACKET_ALIGNMENT)
+var tpacketAlignment = uint(16)
 
 // ErrPoll returned by poll
 var ErrPoll = errors.New("packet poll failed")
@@ -72,34 +69,41 @@ type Stats struct {
 }
 
 // SocketStats is a struct where socket stats are stored
-type SocketStats C.struct_tpacket_stats
+type SocketStats struct {
+	SsPackets uint32
+	SsDrops   uint32
+}
 
 // Packets returns the number of packets seen by this socket.
 func (s *SocketStats) Packets() uint {
-	return uint(s.tp_packets)
+	return uint(s.SsPackets)
 }
 
 // Drops returns the number of packets dropped on this socket.
 func (s *SocketStats) Drops() uint {
-	return uint(s.tp_drops)
+	return uint(s.SsDrops)
 }
 
 // SocketStatsV3 is a struct where socket stats for TPacketV3 are stored
-type SocketStatsV3 C.struct_tpacket_stats_v3
+type SocketStatsV3 struct {
+	SsPackets      uint32
+	SsDrops        uint32
+	SsFreeze_q_cnt uint32
+}
 
 // Packets returns the number of packets seen by this socket.
 func (s *SocketStatsV3) Packets() uint {
-	return uint(s.tp_packets)
+	return uint(s.SsPackets)
 }
 
 // Drops returns the number of packets dropped on this socket.
 func (s *SocketStatsV3) Drops() uint {
-	return uint(s.tp_drops)
+	return uint(s.SsDrops)
 }
 
 // QueueFreezes returns the number of queue freezes on this socket.
 func (s *SocketStatsV3) QueueFreezes() uint {
-	return uint(s.tp_freeze_q_cnt)
+	return uint(s.SsFreeze_q_cnt)
 }
 
 // TPacket implements packet receiving for Linux AF_PACKET versions 1, 2, and 3.
@@ -126,9 +130,9 @@ type TPacket struct {
 	// tpVersion is the version of TPacket actually in use, set by setRequestedTPacketVersion.
 	tpVersion OptTPacketVersion
 	// Hackity hack hack hack.  We need to return a pointer to the header with
-	// getTPacketHeader, and we don't want to allocate a v3wrapper every time,
+	// getTPacketHeader, and we don't want to allocate a V3header every time,
 	// so we leave it in the TPacket object and return a pointer to it.
-	v3 v3wrapper
+	v3 V3header
 
 	statsMu sync.Mutex // guards stats below
 	// socketStats contains stats from the socket
@@ -379,9 +383,9 @@ func (h *TPacket) SocketStats() (SocketStats, SocketStatsV3, error) {
 			return SocketStats{}, SocketStatsV3{}, err
 		}
 
-		h.socketStatsV3.tp_packets += ssv3.tp_packets
-		h.socketStatsV3.tp_drops += ssv3.tp_drops
-		h.socketStatsV3.tp_freeze_q_cnt += ssv3.tp_freeze_q_cnt
+		h.socketStatsV3.SsPackets += ssv3.SsPackets
+		h.socketStatsV3.SsDrops += ssv3.SsDrops
+		h.socketStatsV3.SsFreeze_q_cnt += ssv3.SsFreeze_q_cnt
 		return h.socketStats, h.socketStatsV3, nil
 	}
 	socklen := unsafe.Sizeof(h.socketStats)
@@ -393,8 +397,8 @@ func (h *TPacket) SocketStats() (SocketStats, SocketStatsV3, error) {
 		return SocketStats{}, SocketStatsV3{}, err
 	}
 
-	h.socketStats.tp_packets += ss.tp_packets
-	h.socketStats.tp_drops += ss.tp_drops
+	h.socketStats.SsPackets += ss.SsPackets
+	h.socketStats.SsDrops += ss.SsDrops
 	return h.socketStats, h.socketStatsV3, nil
 }
 
@@ -434,13 +438,13 @@ func (h *TPacket) getTPacketHeader() header {
 			h.offset = 0
 		}
 		position := uintptr(h.rawring) + uintptr(h.opts.frameSize*h.offset)
-		return (*v1header)(unsafe.Pointer(position))
+		return (*V1header)(unsafe.Pointer(position))
 	case TPacketVersion2:
 		if h.offset >= h.opts.framesPerBlock*h.opts.numBlocks {
 			h.offset = 0
 		}
 		position := uintptr(h.rawring) + uintptr(h.opts.frameSize*h.offset)
-		return (*v2header)(unsafe.Pointer(position))
+		return (*V2header)(unsafe.Pointer(position))
 	case TPacketVersion3:
 		// TPacket3 uses each block to return values, instead of each frame.  Hence we need to rotate when we hit #blocks, not #frames.
 		if h.offset >= h.opts.numBlocks {
