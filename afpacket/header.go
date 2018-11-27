@@ -14,10 +14,14 @@ import (
 	"unsafe"
 )
 
-// #include <linux/if_packet.h>
-// #include <linux/if_ether.h>
-// #define VLAN_HLEN	4
-import "C"
+const (
+	VlanHlen        = 4
+	EthAlen         = 6
+	StatusVlanValid = 0x10
+	sizeofV1Hdr     = unsafe.Sizeof(V1header{})
+	sizeofV2Hdr     = unsafe.Sizeof(V2header{})
+	sizeofV3Hdr     = unsafe.Sizeof(V3header{})
+)
 
 // Our model of handling all TPacket versions is a little hacky, to say the
 // least.  We use the header interface to handle interactions with the
@@ -56,8 +60,28 @@ func tpAlign(x int) int {
 	return int((uint(x) + tpacketAlignment - 1) &^ (tpacketAlignment - 1))
 }
 
-type v1header C.struct_tpacket_hdr
-type v2header C.struct_tpacket2_hdr
+type V1header struct {
+	Status  uint64
+	Len     uint32
+	Snaplen uint32
+	Mac     uint16
+	Net     uint16
+	Sec     uint32
+	Usec    uint32
+	Padding [4]byte
+}
+type V2header struct {
+	Status   uint32
+	Len      uint32
+	Snaplen  uint32
+	Mac      uint16
+	Net      uint16
+	Sec      uint32
+	Nsec     uint32
+	VlanTci  uint16
+	VlanTpid uint16
+	Padding  [4]byte
+}
 
 func makeSlice(start uintptr, length int) (data []byte) {
 	slice := (*reflect.SliceHeader)(unsafe.Pointer(&data))
@@ -71,121 +95,172 @@ func insertVlanHeader(data []byte, vlanTCI int, opts *options) []byte {
 	if vlanTCI == 0 || !opts.addVLANHeader {
 		return data
 	}
-	eth := make([]byte, 0, len(data)+C.VLAN_HLEN)
-	eth = append(eth, data[0:C.ETH_ALEN*2]...)
+	eth := make([]byte, 0, len(data)+VlanHlen)
+	eth = append(eth, data[0:EthAlen*2]...)
 	eth = append(eth, []byte{0x81, 0, byte((vlanTCI >> 8) & 0xff), byte(vlanTCI & 0xff)}...)
-	return append(eth, data[C.ETH_ALEN*2:]...)
+	return append(eth, data[EthAlen*2:]...)
 }
 
-func (h *v1header) getVLAN() int {
+func (h *V1header) getVLAN() int {
 	return -1
 }
-func (h *v1header) getStatus() int {
-	return int(h.tp_status)
+func (h *V1header) getStatus() int {
+	return int(h.Status)
 }
-func (h *v1header) clearStatus() {
-	h.tp_status = 0
+func (h *V1header) clearStatus() {
+	h.Status = 0
 }
-func (h *v1header) getTime() time.Time {
-	return time.Unix(int64(h.tp_sec), int64(h.tp_usec)*1000)
+func (h *V1header) getTime() time.Time {
+	return time.Unix(int64(h.Sec), int64(h.Usec)*1000)
 }
-func (h *v1header) getData(opts *options) []byte {
-	return makeSlice(uintptr(unsafe.Pointer(h))+uintptr(h.tp_mac), int(h.tp_snaplen))
+func (h *V1header) getData(opts *options) []byte {
+	return makeSlice(uintptr(unsafe.Pointer(h))+uintptr(h.Mac), int(h.Snaplen))
 }
-func (h *v1header) getLength() int {
-	return int(h.tp_len)
+func (h *V1header) getLength() int {
+	return int(h.Len)
 }
-func (h *v1header) getIfaceIndex() int {
-	ll := (*C.struct_sockaddr_ll)(unsafe.Pointer(uintptr(unsafe.Pointer(h)) + uintptr(tpAlign(int(C.sizeof_struct_tpacket_hdr)))))
-	return int(ll.sll_ifindex)
+func (h *V1header) getIfaceIndex() int {
+	ll := (*SockAddrLL)(unsafe.Pointer(uintptr(unsafe.Pointer(h)) + uintptr(tpAlign(int(sizeofV1Hdr)))))
+	return int(ll.Ifindex)
 }
-func (h *v1header) next() bool {
+func (h *V1header) next() bool {
 	return false
 }
 
-func (h *v2header) getVLAN() int {
+func (h *V2header) getVLAN() int {
 	return -1
 }
-func (h *v2header) getStatus() int {
-	return int(h.tp_status)
+func (h *V2header) getStatus() int {
+	return int(h.Status)
 }
-func (h *v2header) clearStatus() {
-	h.tp_status = 0
+func (h *V2header) clearStatus() {
+	h.Status = 0
 }
-func (h *v2header) getTime() time.Time {
-	return time.Unix(int64(h.tp_sec), int64(h.tp_nsec))
+func (h *V2header) getTime() time.Time {
+	return time.Unix(int64(h.Sec), int64(h.Nsec))
 }
-func (h *v2header) getData(opts *options) []byte {
-	data := makeSlice(uintptr(unsafe.Pointer(h))+uintptr(h.tp_mac), int(h.tp_snaplen))
-	return insertVlanHeader(data, int(h.tp_vlan_tci), opts)
+func (h *V2header) getData(opts *options) []byte {
+	data := makeSlice(uintptr(unsafe.Pointer(h))+uintptr(h.Mac), int(h.Snaplen))
+	return insertVlanHeader(data, int(h.VlanTci), opts)
 }
-func (h *v2header) getLength() int {
-	return int(h.tp_len)
+func (h *V2header) getLength() int {
+	return int(h.Len)
 }
-func (h *v2header) getIfaceIndex() int {
-	ll := (*C.struct_sockaddr_ll)(unsafe.Pointer(uintptr(unsafe.Pointer(h)) + uintptr(tpAlign(int(C.sizeof_struct_tpacket2_hdr)))))
-	return int(ll.sll_ifindex)
+func (h *V2header) getIfaceIndex() int {
+	ll := (*SockAddrLL)(unsafe.Pointer(uintptr(unsafe.Pointer(h)) + uintptr(tpAlign(int(sizeofV2Hdr)))))
+	return int(ll.Ifindex)
 }
-func (h *v2header) next() bool {
+func (h *V2header) next() bool {
 	return false
 }
 
-type v3wrapper struct {
-	block    *C.struct_tpacket_block_desc
-	blockhdr *C.struct_tpacket_hdr_v1
-	packet   *C.struct_tpacket3_hdr
-	used     C.__u32
+type TpacketHdrVariant1 struct {
+	TpRxhash   uint32
+	TpVlanTci  uint32
+	TpVlanTpid uint16
+	Padding    uint16
 }
 
-func initV3Wrapper(block unsafe.Pointer) (w v3wrapper) {
-	w.block = (*C.struct_tpacket_block_desc)(block)
-	w.blockhdr = (*C.struct_tpacket_hdr_v1)(unsafe.Pointer(&w.block.hdr[0]))
-	w.packet = (*C.struct_tpacket3_hdr)(unsafe.Pointer(uintptr(block) + uintptr(w.blockhdr.offset_to_first_pkt)))
+type TpPacketBdTs struct {
+	Sec  uint32
+	Usec uint32
+}
+
+type TpPacket struct {
+	TpNextOffset uint32
+	Tp_sec       uint32
+	Tp_nsec      uint32
+	Tp_snaplen   uint32
+	Tp_len       uint32
+	Tp_status    uint32
+	Tp_mac       uint16
+	Tp_net       uint16
+	Tp_hv1       TpacketHdrVariant1
+	Padding      [8]uint8
+}
+
+type TpBlock struct {
+	Version uint32
+	ToPriv  uint32
+	Hdr     [40]byte
+}
+
+type V3header struct {
+	Block    *TpBlock
+	Blockhdr *TpacketHdrV1
+	Packet   *TpPacket
+	used     uint32
+}
+
+type SockAddrLL struct {
+	Family   uint16
+	Protocol uint16
+	Ifindex  int32
+	Hatype   uint16
+	Pkttype  uint8
+	Halen    uint8
+}
+
+type TpacketHdrV1 struct {
+	BlockStatus      uint32
+	NumPkts          uint32
+	OffsetToFirstPkt uint32
+	BlkLen           uint32
+	SeqNum           uint64
+	TsFirstPkt       TpPacketBdTs
+	TsLastPkt        TpPacketBdTs
+}
+
+func initV3Wrapper(block unsafe.Pointer) (w V3header) {
+	w.Block = (*TpBlock)(block)
+	w.Blockhdr = (*TpacketHdrV1)(unsafe.Pointer(&w.Block.Hdr[0]))
+	w.Packet = (*TpPacket)(unsafe.Pointer(uintptr(block) + uintptr(w.Blockhdr.OffsetToFirstPkt)))
 	return
 }
 
-func (w *v3wrapper) getVLAN() int {
-	if w.packet.tp_status&C.TP_STATUS_VLAN_VALID != 0 {
-		hv1 := (*_Ctype_struct_tpacket_hdr_variant1)(unsafe.Pointer(&w.packet.anon0[0]))
-		return int(hv1.tp_vlan_tci & 0xfff)
+func (w *V3header) getVLAN() int {
+	if w.Packet.Tp_status&StatusVlanValid != 0 {
+		//hv1 := (*TpacketHdrVariant1)(unsafe.Pointer(&w.TpPacket.anon0[0]))
+		return int(w.Packet.Tp_hv1.TpVlanTci & 0xfff)
 	}
 	return -1
 }
 
-func (w *v3wrapper) getStatus() int {
-	return int(w.blockhdr.block_status)
+func (w *V3header) getStatus() int {
+	return int(w.Blockhdr.BlockStatus)
 }
-func (w *v3wrapper) clearStatus() {
-	w.blockhdr.block_status = 0
+func (w *V3header) clearStatus() {
+	w.Blockhdr.BlockStatus = 0
 }
-func (w *v3wrapper) getTime() time.Time {
-	return time.Unix(int64(w.packet.tp_sec), int64(w.packet.tp_nsec))
+func (w *V3header) getTime() time.Time {
+	return time.Unix(int64(w.Packet.Tp_sec), int64(w.Packet.Tp_nsec))
 }
-func (w *v3wrapper) getData(opts *options) []byte {
-	data := makeSlice(uintptr(unsafe.Pointer(w.packet))+uintptr(w.packet.tp_mac), int(w.packet.tp_snaplen))
+func (w *V3header) getData(opts *options) []byte {
+	data := makeSlice(uintptr(unsafe.Pointer(w.Packet))+uintptr(w.Packet.Tp_mac), int(w.Packet.Tp_snaplen))
 
-	hv1 := (*C.struct_tpacket_hdr_variant1)(unsafe.Pointer(&w.packet.anon0[0]))
-	return insertVlanHeader(data, int(hv1.tp_vlan_tci), opts)
+	//hv1 := (*C.struct_tpacket_hdr_variant1)(unsafe.Pointer(&w.TpPacket.anon0[0]))
+	return insertVlanHeader(data, int(w.Packet.Tp_hv1.TpVlanTci), opts)
 }
-func (w *v3wrapper) getLength() int {
-	return int(w.packet.tp_len)
+func (w *V3header) getLength() int {
+	return int(w.Packet.Tp_len)
 }
-func (w *v3wrapper) getIfaceIndex() int {
-	ll := (*C.struct_sockaddr_ll)(unsafe.Pointer(uintptr(unsafe.Pointer(w.packet)) + uintptr(tpAlign(int(C.sizeof_struct_tpacket3_hdr)))))
-	return int(ll.sll_ifindex)
+
+func (w *V3header) getIfaceIndex() int {
+	ll := (*SockAddrLL)(unsafe.Pointer(uintptr(unsafe.Pointer(w.Packet)) + uintptr(tpAlign(int(sizeofV3Hdr)))))
+	return int(ll.Ifindex)
 }
-func (w *v3wrapper) next() bool {
+func (w *V3header) next() bool {
 	w.used++
-	if w.used >= w.blockhdr.num_pkts {
+	if w.used >= w.Blockhdr.NumPkts {
 		return false
 	}
 
-	next := uintptr(unsafe.Pointer(w.packet))
-	if w.packet.tp_next_offset != 0 {
-		next += uintptr(w.packet.tp_next_offset)
+	next := uintptr(unsafe.Pointer(w.Packet))
+	if w.Packet.TpNextOffset != 0 {
+		next += uintptr(w.Packet.TpNextOffset)
 	} else {
-		next += uintptr(tpacketAlign(int(w.packet.tp_snaplen) + int(w.packet.tp_mac)))
+		next += uintptr(tpacketAlign(int(w.Packet.Tp_snaplen) + int(w.Packet.Tp_mac)))
 	}
-	w.packet = (*C.struct_tpacket3_hdr)(unsafe.Pointer(next))
+	w.Packet = (*TpPacket)(unsafe.Pointer(next))
 	return true
 }
