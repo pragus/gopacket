@@ -15,28 +15,23 @@ package afpacket
 
 import (
 	"errors"
-	"golang.org/x/sys/unix"
-	"unsafe"
-	"sync"
-	"net"
-	"time"
-	"runtime"
-	"syscall"
 	"fmt"
+	"github.com/pragus/gopacket"
 	"golang.org/x/net/bpf"
+	"golang.org/x/sys/unix"
+	"net"
+	"runtime"
+	"sync"
 	"sync/atomic"
-	)
+	"syscall"
+	"time"
+	"unsafe"
+)
 
-/*
-#include <linux/if_packet.h>  // AF_PACKET, sockaddr_ll
-#include <linux/if_ether.h>  // ETH_P_ALL
-#include <sys/socket.h>  // socket()
-#include <unistd.h>  // close()
-#include <arpa/inet.h>  // htons()
-#include <sys/mman.h>  // mmap(), munmap()
-#include <poll.h>  // poll()
-*/
-import "C"
+const (
+	TpStatusKernel = 0
+	TpStatusUser   = 1
+)
 
 var pageSize = unix.Getpagesize()
 var tpacketAlignment = uint(16)
@@ -82,6 +77,20 @@ func (s *SocketStats) Packets() uint {
 // Drops returns the number of packets dropped on this socket.
 func (s *SocketStats) Drops() uint {
 	return uint(s.SsDrops)
+}
+
+type TpReq struct {
+	BlockSize uint32
+	BlockNr   uint32
+	FrameSize uint32
+	FrameNr   uint32
+}
+
+type TpReq3 struct {
+	TpReq
+	RetireBlkTov   uint32
+	SizeOfPriv     uint32
+	FeatureReqWord uint32
 }
 
 // SocketStatsV3 is a struct where socket stats for TPacketV3 are stored
@@ -189,21 +198,21 @@ func (h *TPacket) setUpRing() (err error) {
 	totalSize := int(h.opts.framesPerBlock * h.opts.numBlocks * h.opts.frameSize)
 	switch h.tpVersion {
 	case TPacketVersion1, TPacketVersion2:
-		var tp C.struct_tpacket_req
-		tp.tp_block_size = C.uint(h.opts.blockSize)
-		tp.tp_block_nr = C.uint(h.opts.numBlocks)
-		tp.tp_frame_size = C.uint(h.opts.frameSize)
-		tp.tp_frame_nr = C.uint(h.opts.framesPerBlock * h.opts.numBlocks)
+		var tp TpReq
+		tp.BlockSize = uint32(h.opts.blockSize)
+		tp.BlockNr = uint32(h.opts.numBlocks)
+		tp.FrameSize = uint32(h.opts.frameSize)
+		tp.FrameNr = uint32(h.opts.framesPerBlock * h.opts.numBlocks)
 		if err := setsockopt(h.fd, unix.SOL_PACKET, unix.PACKET_RX_RING, unsafe.Pointer(&tp), unsafe.Sizeof(tp)); err != nil {
 			return fmt.Errorf("setsockopt packet_rx_ring: %v", err)
 		}
 	case TPacketVersion3:
-		var tp C.struct_tpacket_req3
-		tp.tp_block_size = C.uint(h.opts.blockSize)
-		tp.tp_block_nr = C.uint(h.opts.numBlocks)
-		tp.tp_frame_size = C.uint(h.opts.frameSize)
-		tp.tp_frame_nr = C.uint(h.opts.framesPerBlock * h.opts.numBlocks)
-		tp.tp_retire_blk_tov = C.uint(h.opts.blockTimeout / time.Millisecond)
+		var tp TpReq3
+		tp.BlockSize = uint32(h.opts.blockSize)
+		tp.BlockNr = uint32(h.opts.numBlocks)
+		tp.FrameSize = uint32(h.opts.frameSize)
+		tp.FrameNr = uint32(h.opts.framesPerBlock * h.opts.numBlocks)
+		tp.RetireBlkTov = uint32(h.opts.blockTimeout / time.Millisecond)
 		if err := setsockopt(h.fd, unix.SOL_PACKET, unix.PACKET_RX_RING, unsafe.Pointer(&tp), unsafe.Sizeof(tp)); err != nil {
 			return fmt.Errorf("setsockopt packet_rx_ring v3: %v", err)
 		}
@@ -346,20 +355,17 @@ func (h *TPacket) Stats() (Stats, error) {
 func (h *TPacket) InitSocketStats() error {
 	if h.tpVersion == TPacketVersion3 {
 		socklen := unsafe.Sizeof(h.socketStatsV3)
-		slt := C.socklen_t(socklen)
 		var ssv3 SocketStatsV3
-
-		err := getsockopt(h.fd, unix.SOL_PACKET, unix.PACKET_STATISTICS, unsafe.Pointer(&ssv3), uintptr(unsafe.Pointer(&slt)))
+		err := getsockopt(h.fd, unix.SOL_PACKET, unix.PACKET_STATISTICS, unsafe.Pointer(&ssv3), uintptr(unsafe.Pointer(&socklen)))
 		if err != nil {
 			return err
 		}
 		h.socketStatsV3 = SocketStatsV3{}
 	} else {
 		socklen := unsafe.Sizeof(h.socketStats)
-		slt := C.socklen_t(socklen)
 		var ss SocketStats
 
-		err := getsockopt(h.fd, unix.SOL_PACKET, unix.PACKET_STATISTICS, unsafe.Pointer(&ss), uintptr(unsafe.Pointer(&slt)))
+		err := getsockopt(h.fd, unix.SOL_PACKET, unix.PACKET_STATISTICS, unsafe.Pointer(&ss), uintptr(unsafe.Pointer(&socklen)))
 		if err != nil {
 			return err
 		}
@@ -375,10 +381,9 @@ func (h *TPacket) SocketStats() (SocketStats, SocketStatsV3, error) {
 	// We need to save the counters since asking for the stats will clear them
 	if h.tpVersion == TPacketVersion3 {
 		socklen := unsafe.Sizeof(h.socketStatsV3)
-		slt := C.socklen_t(socklen)
 		var ssv3 SocketStatsV3
 
-		err := getsockopt(h.fd, unix.SOL_PACKET, unix.PACKET_STATISTICS, unsafe.Pointer(&ssv3), uintptr(unsafe.Pointer(&slt)))
+		err := getsockopt(h.fd, unix.SOL_PACKET, unix.PACKET_STATISTICS, unsafe.Pointer(&ssv3), uintptr(unsafe.Pointer(&socklen)))
 		if err != nil {
 			return SocketStats{}, SocketStatsV3{}, err
 		}
@@ -389,10 +394,9 @@ func (h *TPacket) SocketStats() (SocketStats, SocketStatsV3, error) {
 		return h.socketStats, h.socketStatsV3, nil
 	}
 	socklen := unsafe.Sizeof(h.socketStats)
-	slt := C.socklen_t(socklen)
 	var ss SocketStats
 
-	err := getsockopt(h.fd, unix.SOL_PACKET, unix.PACKET_STATISTICS, unsafe.Pointer(&ss), uintptr(unsafe.Pointer(&slt)))
+	err := getsockopt(h.fd, unix.SOL_PACKET, unix.PACKET_STATISTICS, unsafe.Pointer(&ss), uintptr(unsafe.Pointer(&socklen)))
 	if err != nil {
 		return SocketStats{}, SocketStatsV3{}, err
 	}
@@ -459,7 +463,7 @@ func (h *TPacket) getTPacketHeader() header {
 
 func (h *TPacket) pollForFirstPacket(hdr header) error {
 	tm := int(h.opts.pollTimeout / time.Millisecond)
-	for hdr.getStatus()&C.TP_STATUS_USER == 0 {
+	for hdr.getStatus()&TpStatusUser == 0 {
 		pollset := [1]unix.PollFd{
 			{
 				Fd:     int32(h.fd),
@@ -509,8 +513,8 @@ const (
 func (h *TPacket) SetFanout(t FanoutType, id uint16) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	arg := C.int(t) << 16
-	arg |= C.int(id)
+	arg := int32(t) << 16
+	arg |= int32(id)
 	return setsockopt(h.fd, unix.SOL_PACKET, unix.PACKET_FANOUT, unsafe.Pointer(&arg), unsafe.Sizeof(arg))
 }
 

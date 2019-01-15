@@ -9,9 +9,8 @@
 package afpacket
 
 import (
-	"unsafe"
-
 	"golang.org/x/sys/unix"
+	"unsafe"
 )
 
 // setsockopt provides access to the setsockopt syscall.
