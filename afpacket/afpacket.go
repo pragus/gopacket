@@ -42,10 +42,6 @@ var ErrPoll = errors.New("packet poll failed")
 // ErrTimeout returned on poll timeout
 var ErrTimeout = errors.New("packet poll timeout expired")
 
-func tpacketAlign(v int) int {
-	return int((uint(v) + tpacketAlignment - 1) & ((^tpacketAlignment) - 1))
-}
-
 // AncillaryVLAN structures are used to pass the captured VLAN
 // as ancillary data via CaptureInfo.
 type AncillaryVLAN struct {
@@ -463,7 +459,7 @@ func (h *TPacket) getTPacketHeader() header {
 
 func (h *TPacket) pollForFirstPacket(hdr header) error {
 	tm := int(h.opts.pollTimeout / time.Millisecond)
-	for hdr.getStatus()&TpStatusUser == 0 {
+	for hdr.getStatus()&unix.TP_STATUS_USER == 0 {
 		pollset := [1]unix.PollFd{
 			{
 				Fd:     int32(h.fd),
@@ -496,12 +492,17 @@ type FanoutType int
 
 // FanoutType values.
 const (
-	FanoutHash FanoutType = 0
+	FanoutHash FanoutType = unix.PACKET_FANOUT_HASH
 	// It appears that defrag only works with FanoutHash, see:
 	// http://lxr.free-electrons.com/source/net/packet/af_packet.c#L1204
-	FanoutHashWithDefrag FanoutType = 0x8000
-	FanoutLoadBalance    FanoutType = 1
-	FanoutCPU            FanoutType = 2
+	FanoutHashWithDefrag FanoutType = unix.PACKET_FANOUT_FLAG_DEFRAG
+	FanoutLoadBalance    FanoutType = unix.PACKET_FANOUT_LB
+	FanoutCPU            FanoutType = unix.PACKET_FANOUT_CPU
+	FanoutRollover       FanoutType = unix.PACKET_FANOUT_ROLLOVER
+	FanoutRandom         FanoutType = unix.PACKET_FANOUT_RND
+	FanoutQueueMapping   FanoutType = unix.PACKET_FANOUT_QM
+	FanoutCBPF           FanoutType = unix.PACKET_FANOUT_CBPF
+	FanoutEBPF           FanoutType = unix.PACKET_FANOUT_EBPF
 )
 
 // SetFanout activates TPacket's fanout ability.

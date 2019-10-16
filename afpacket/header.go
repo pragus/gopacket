@@ -12,6 +12,8 @@ import (
 	"reflect"
 	"time"
 	"unsafe"
+
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -55,6 +57,8 @@ type header interface {
 	// packets (in which case clearStatus should be called).
 	next() bool
 }
+
+const tpacketAlignment = uint(unix.TPACKET_ALIGNMENT)
 
 func tpAlign(x int) int {
 	return int((uint(x) + tpacketAlignment - 1) &^ (tpacketAlignment - 1))

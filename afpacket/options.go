@@ -12,8 +12,9 @@ import (
 	"errors"
 	"fmt"
 	"time"
-)
 
+	"golang.org/x/sys/unix"
+)
 
 // OptTPacketVersion is the version of TPacket to use.
 // It can be passed into NewTPacket.
@@ -57,12 +58,20 @@ const (
 	TPacketVersion3			= OptTPacketVersion(0x2)
 	tpacketVersionMax		= TPacketVersion3
 	tpacketVersionMin		= -1
+	TPacketVersionHighestAvailable = OptTPacketVersion(-1)
+	TPacketVersion1                = OptTPacketVersion(unix.TPACKET_V1)
+	TPacketVersion2                = OptTPacketVersion(unix.TPACKET_V2)
+	TPacketVersion3                = OptTPacketVersion(unix.TPACKET_V3)
+	tpacketVersionMax              = TPacketVersion3
+	tpacketVersionMin              = -1
 	// SocketRaw is the default socket type.  It returns packet data
 	// including the link layer (ethernet headers, etc).
 	SocketRaw = OptSocketType(0x3)
+	SocketRaw = OptSocketType(unix.SOCK_RAW)
 	// SocketDgram strips off the link layer when reading packets, and adds
 	// the link layer back automatically on packet writes (coming soon...)
 	SocketDgram = OptSocketType(0x2)
+	SocketDgram = OptSocketType(unix.SOCK_DGRAM)
 )
 
 // OptInterface is the specific interface to bind to.
