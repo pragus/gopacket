@@ -8,6 +8,7 @@
 
 package afpacket
 
+import "C"
 import (
 	"reflect"
 	"time"
@@ -263,7 +264,7 @@ func (w *V3header) next() bool {
 	if w.Packet.TpNextOffset != 0 {
 		next += uintptr(w.Packet.TpNextOffset)
 	} else {
-		next += uintptr(tpacketAlign(int(w.Packet.Tp_snaplen) + int(w.Packet.Tp_mac)))
+		next += uintptr(tpAlign(int(w.Packet.Tp_snaplen) + int(w.Packet.Tp_mac)))
 	}
 	w.Packet = (*TpPacket)(unsafe.Pointer(next))
 	return true

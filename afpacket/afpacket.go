@@ -34,7 +34,6 @@ const (
 )
 
 var pageSize = unix.Getpagesize()
-var tpacketAlignment = uint(16)
 
 // ErrPoll returned by poll
 var ErrPoll = errors.New("packet poll failed")

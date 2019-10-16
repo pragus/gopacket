@@ -16,10 +16,10 @@ import (
 	"runtime/pprof"
 	"time"
 
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/afpacket"
-	"github.com/google/gopacket/layers"
-	"github.com/google/gopacket/pcap"
+	"github.com/pragus/gopacket"
+	"github.com/pragus/gopacket/afpacket"
+	"github.com/pragus/gopacket/layers"
+	"github.com/pragus/gopacket/pcap"
 	"golang.org/x/net/bpf"
 
 	_ "github.com/google/gopacket/layers"
