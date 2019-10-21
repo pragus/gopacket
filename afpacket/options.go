@@ -16,6 +16,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+var pageSize = unix.Getpagesize()
+
 // OptTPacketVersion is the version of TPacket to use.
 // It can be passed into NewTPacket.
 type OptTPacketVersion int

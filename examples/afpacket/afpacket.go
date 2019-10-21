@@ -19,8 +19,6 @@ import (
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/afpacket"
 	"github.com/google/gopacket/layers"
-	"github.com/google/gopacket/pcap"
-	"golang.org/x/net/bpf"
 
 	_ "github.com/google/gopacket/layers"
 )
@@ -35,6 +33,11 @@ var (
 	verbose    = flag.Int64("log_every", 1, "Write a log every X packets")
 	addVLAN    = flag.Bool("add_vlan", false, "If true, add VLAN header")
 )
+
+// BlockForever causes it to block forever waiting for packets, when passed
+// into SetTimeout or OpenLive, while still returning incoming packets to userland relatively
+// quickly.
+const BlockForever = -time.Millisecond * 10
 
 type afpacketHandle struct {
 	TPacket *afpacket.TPacket
@@ -72,28 +75,6 @@ func newAfpacketHandle(device string, snaplen int, block_size int, num_blocks in
 // ZeroCopyReadPacketData satisfies ZeroCopyPacketDataSource interface
 func (h *afpacketHandle) ZeroCopyReadPacketData() (data []byte, ci gopacket.CaptureInfo, err error) {
 	return h.TPacket.ZeroCopyReadPacketData()
-}
-
-// SetBPFFilter translates a BPF filter string into BPF RawInstruction and applies them.
-func (h *afpacketHandle) SetBPFFilter(filter string, snaplen int) (err error) {
-	pcapBPF, err := pcap.CompileBPFFilter(layers.LinkTypeEthernet, snaplen, filter)
-	if err != nil {
-		return err
-	}
-	bpfIns := []bpf.RawInstruction{}
-	for _, ins := range pcapBPF {
-		bpfIns2 := bpf.RawInstruction{
-			Op: ins.Code,
-			Jt: ins.Jt,
-			Jf: ins.Jf,
-			K:  ins.K,
-		}
-		bpfIns = append(bpfIns, bpfIns2)
-	}
-	if h.TPacket.SetBPF(bpfIns); err != nil {
-		return err
-	}
-	return h.TPacket.SetBPF(bpfIns)
 }
 
 // LinkType returns ethernet link type.
@@ -156,14 +137,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	afpacketHandle, err := newAfpacketHandle(*iface, szFrame, szBlock, numBlocks, *addVLAN, pcap.BlockForever)
+	afpacketHandle, err := newAfpacketHandle(*iface, szFrame, szBlock, numBlocks, *addVLAN, BlockForever)
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = afpacketHandle.SetBPFFilter(*filter, *snaplen)
-	if err != nil {
-		log.Fatal(err)
-	}
+
 	source := gopacket.ZeroCopyPacketDataSource(afpacketHandle)
 	defer afpacketHandle.Close()
 
